@@ -65,6 +65,8 @@ def parse_args():
     parser.add_argument('--num-layers', type=int, default=2, help='Number of LSTM layers for Bi-LSTM')
     parser.add_argument('--save', default='bilstm_model.pth')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
+    parser.add_argument('--resume', default=None, help='Checkpoint file .pth để resume (chỉ Bi-LSTM)')
+    parser.add_argument('--save-every', type=int, default=10, help='Lưu checkpoint mỗi N epoch')
     return parser.parse_args()
 
 
@@ -101,8 +103,18 @@ def train():
     criterion = TripletLoss(margin=0.3)
     optimizer = optim.Adagrad(bilstm.parameters(), lr=args.lr)
 
+    start_epoch = 0
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        bilstm.load_state_dict(checkpoint['model_state_dict'])
+        if 'optimizer_state_dict' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'epoch' in checkpoint:
+            start_epoch = checkpoint['epoch'] + 1
+        print(f"Resume từ epoch {start_epoch}")
+
     bilstm.train()
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         running_loss = 0.0
         for batch_idx, (seqs, pos_imgs, neg_imgs) in enumerate(loader):
             # seqs: (B, T, C, H, W) with T=20
@@ -138,10 +150,21 @@ def train():
         avg_loss = running_loss / len(loader)
         print(f"Epoch {epoch+1}/{args.epochs} | Loss: {avg_loss:.4f}")
 
-        # Save checkpoint every 50 epochs
-        if (epoch+1) % 50 == 0:
-            torch.save(bilstm.state_dict(), f"bilstm_epoch{epoch+1}.pth")
+        avg_loss = running_loss / len(loader)
+        print(f"Epoch {epoch+1}/{args.epochs} | Loss: {avg_loss:.4f}")
 
+        # Save checkpoint every args.save_every epochs
+        if (epoch + 1) % args.save_every == 0:
+            checkpoint_path = f"bilstm_epoch{epoch+1}.pth"
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': bilstm.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': avg_loss,
+            }, checkpoint_path)
+            print(f"Checkpoint saved: {checkpoint_path}")
+
+    # Lưu model cuối cùng
     torch.save(bilstm.state_dict(), args.save)
     print(f"Bi-LSTM model saved to {args.save}")
 
